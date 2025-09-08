@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chess</title>
+    <link rel="stylesheet" href="../static/style.css">
+</head>
+<body>
+
+<h1 style="color: #ecf0f1">Chess</h1>
+<div class='game-container'>
+    <div class="board-container">
+        <div class="board"></div>
+        <div class="pieces-layer" id="pieces-layer"></div>
+    </div>
+
+    <div class="controls">
+        <button id="new-game">New Game</button>
+        <div class="status" id="status">White's turn</div>
+        <div class="captured">
+            <h3>Captured by white</h3>
+            <div class="captured-list" id="captured-white"></div>
+
+            <h3>Captured by black</h3>
+            <div class="captured-list" id="captured-black"></div>
+        </div>
+    </div>
+</div>
+
+<script src="../static/fetch.js"></script>
+</body>
+</html>
