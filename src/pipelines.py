@@ -1,8 +1,13 @@
 from MCTS import MCTS
 import numpy as np
 import random
+import torch
 from UI.pieces import Board, Pawn, Queen
 from collections import deque
+import torch.nn as nn
+import torch.optim as optim
+import io
+import chess.pgn
 
 class ChessState:
     def __init__(self, board):
@@ -94,14 +99,71 @@ class SelfPlay:
 
         return training
 
+def LoadPGN(path, num_games= 100000):
+    games = []
+    with open(path) as pgn:
+        for _ in range(num_games):
+            game = chess.pgn.read_game(pgn)
+            if game is None:
+                break
+            games.append(game)
+    return games
+
+def board_to_state(board):
+    state = np.zeros((18, 8, 8), dtype= np.float32)
+    piece_to_channel = {
+        chess.PAWN: 0, chess.KNIGHT: 1, chess.BISHOP: 2, chess.ROOK: 3, chess.QUEEN: 4, chess.KING: 5
+    }
+    for square in chess.SQUARES:
+        piece = board.piece_at(square)
+        if piece:
+            row, col = divmod(square, 8)
+            channel_offset = 0 if piece.color == chess.WHITE else 6
+            channel = piece_to_channel[piece.piece_type] + channel_offset
+            state[channel, 7 - row, col] = 1
+    state[12, :, :] = 1 if board.turn == chess.WHITE else 0
+    return state
+def ProcessPGN(games):
+    states = []
+    policies = []
+    values = []
+
+    for game in games:
+        board = game.board()
+        res = game.headers.get("Result", "1/2-1/2")
+
+        if res == "1-0":
+            outcome = 1.0
+        elif res == "0-1":
+            outcome = -1.0
+        else:
+            outcome = 0.0
+        for node in game.mainlines():
+            board.push(node.move)
+            state = board_to_state(board)
+            states.append(state)
+
+            move = node.move
+            from_square = move.from_square
+            to_square = move.to_square
+
+            policy_vector = np.zeros(64*64)
+            idx = from_square*64 + to_square
+            policy_vector[idx] = 1.0
+            policies.append(policy_vector)
+            values.append(outcome if board.turn == chess.WHITE else -outcome)
+        return states, policies,values
 
 class TrainingPipeline:
-    def __init__(self, model, num_workers= 4, games_per_iterations= 100, iterations= 1000, buffer= 100000, batch_size= 1024):
+    def __init__(self, model, num_workers= 4, games_per_iterations= 100, iterations= 1000, buffer= 100000, batch_size= 1024,
+                 supervised_epochs= 10, supervised_batch_size= 512):
         self.model = model
         self.num_workers = num_workers
         self.games_per_iterations = games_per_iterations
         self.buffer = buffer
         self.batch_size = batch_size
+        self.supervised_epochs = supervised_epochs
+        self.supervised_batch_size = supervised_batch_size
         self.iterations = iterations
         self.replay = deque(maxlen=buffer)
         self.workers = [SelfPlay(model) for _ in range(num_workers)]
@@ -136,12 +198,57 @@ class TrainingPipeline:
                 losses += 1
 
         print(f"Wins: {wins}, Draws: {draws}, Losses: {losses}")
+
+    def supervised_train(self, path, num_games= 10000):
+        print("Loading supervised data...")
+        games = LoadPGN(path, num_games)
+        print(f"Load {len(games)} games")
+        print("Processing supervised data...")
+        states, policies, values = ProcessPGN(games)
+        print(f"Processing {len(states)} positions")
+        states_tensor = torch.stack([torch.from_numpy(s).unsqueeze(0) for s in states])
+        policies_tensor = torch.tensor(policies)
+        values_tensor = torch.tensor(values).float()
+
+        dataset = torch.utils.data.TensorDataset(states_tensor, policies_tensor, values_tensor)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size= self.supervised_batch_size, shuffle= True)
+
+        print("Starting supervised training...")
+        for epoch in range(self.supervised_epochs):
+            total = 0.0
+            for idx, (batch_states, batch_policies, batch_values) in enumerate(dataloader):
+                batch_states = batch_states.to(self.model.device)
+                batch_policies = batch_policies.to(self.model.device)
+                batch_values = batch_values.to(self.model.device)
+
+                policy_logits, value_pred = self.model.net(batch_states)
+                policy_loss = nn.CrossEntropyLoss()(policy_logits, batch_policies.argmax(dim=1))
+                value_loss = nn.MSELoss()(value_pred.squeeze(), batch_values)
+                regularization_loss = torch.sum(torch.tensor
+                                                ([torch.sum(p**2) for p in self.model.net.parameters()]))
+                batch_loss = policy_loss + value_loss + 1e-4*regularization_loss
+                self.model.optimizer.zero_grad()
+                batch_loss.backward()
+                self.model.optimizer.step()
+
+                total += batch_loss.item()
+
+                if idx % 100 == 0:
+                    print(f"Epoch: {epoch + 1}/{self.supervised_epochs}, Batch {idx}, Loss: {batch_loss.item()}")
+
+                avg_loss = total / len(dataloader)
+                print(f"Epoch: {epoch + 1}/{self.supervised_epochs}, Average Loss: {avg_loss:.4f}")
+                if (epoch + 1) % 5 == 0:
+                    self.model.save(f"Supervised_{epoch + 1}.pth")
+
+
+
     def train(self):
         for iteration in range(self.iterations):
             print(f"Iteration {iteration + 1}/{self.iterations}")
             all_data = []
             for worker in self.workers:
-                for _ in range(self.games_per_iterations//self.num_workers):
+                for _ in range(self.games_per_iterations // self.num_workers):
                     game_data = worker.play()
                     all_data.extend(game_data)
             self.replay.extend(all_data)
