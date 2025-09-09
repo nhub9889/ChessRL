@@ -1,5 +1,6 @@
 
 import math
+import torch
 
 class MCTSNode():
     def __init__(self, state, parent= None, action= None, prior= 0.0):
@@ -34,9 +35,10 @@ class MCTSNode():
         bchild = None
 
         for action, child in self.children.items():
-            score = child.value() + exploration_weight*child.prior*\
-                    math.sqrt(self.visits)/(1 + child.visits)
-
+            if child.visits == 0:
+                score = exploration_weight*child.prior*math.sqrt(self.visits)/ 1
+            else:
+                score = child.value() + exploration_weight*child.prior * math.sqrt(self.visits) / (1 + child.visit)
             if score > bscore:
                 bscore = score
                 baction = action
@@ -96,10 +98,15 @@ class MCTS:
     def _get_action_probs(self, state, policy):
         legal_moves = state.getLegalMoves()
         action_probs = []
+        policy = torch.softmax(torch.tensor(policy), dim= 1).numpy()
         for move in legal_moves:
             idx = self._move_to_index(move)
             action_probs.append((move, policy[idx]))
-        return action_probs
+
+        total = sum(prob for _, prob in action_probs)
+        if total > 0:
+            action_probs = [(move, prob/total) for move, prob in action_probs]
+        return action_probsg
 
     def _move_to_index(self, move):
         from_square, to_square = move
