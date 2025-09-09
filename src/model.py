@@ -61,8 +61,6 @@ class Model:
         self.device = device
         self.net = Net(input_channels, actions).to(device)
         self.optimizer = optim.Adam(self.net.parameters(), lr= lr, weight_decay= weight_decay)
-        self.loss_policy = nn.CrossEntropyLoss()
-        self.loss_value = nn.MSELoss()
 
     def predict(self, state):
         state_tensor = self._state_to_tensor(state).to(self.device)
@@ -92,18 +90,20 @@ class Model:
         target_values = torch.tensor(target_values).float().to(self.device)
 
         policies, values = self.net(states)
+        policy_probs = torch.softmax(policies, dim=1)
 
         #Calculate losses
-        loss_policy = self.loss_policy(policies, target_policies)
-        loss_value = self.loss_value(values.squeeze(), target_values)
-        loss = loss_policy + loss_value
+        loss_value = torch.mean((target_values - values.squeeze()) ** 2)
+        loss_policy = -torch.mean(torch.sum(target_policies * torch.log(policy_probs + 1e-10), dim= 1))
+        loss_regularization = torch.sum(torch.tensor([torch.sum(p ** 2) for p in self.net.parameters()]))
+        total = loss_value + loss_policy + 1e-4*loss_regularization
 
         #Backward pass
         self.optimizer.zero_grad()
-        loss.backward()
+        total.backward()
         self.optimizer.step()
 
-        return loss.item()
+        return total.item()
 
     def save(self, path):
         torch.save({
