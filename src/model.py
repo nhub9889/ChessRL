@@ -93,10 +93,10 @@ class Model:
         policy_probs = torch.softmax(policies, dim=1)
 
         #Calculate losses
-        loss_value = torch.mean((target_values - values.squeeze()) ** 2)
-        loss_policy = -torch.mean(torch.sum(target_policies * torch.log(policy_probs + 1e-10), dim= 1))
-        loss_regularization = torch.sum(torch.tensor([torch.sum(p ** 2) for p in self.net.parameters()]))
-        total = loss_value + loss_policy + 1e-4*loss_regularization
+        value_loss = torch.mean((target_values - values.squeeze()) ** 2)
+        policy_loss = -torch.mean(torch.sum(target_policies * torch.log(policy_probs + 1e-10), dim= 1))
+        regularization_loss = torch.sum(torch.tensor([torch.sum(p ** 2) for p in self.net.parameters()]))
+        total = value_loss + policy_loss + 1e-4*regularization_loss
 
         #Backward pass
         self.optimizer.zero_grad()

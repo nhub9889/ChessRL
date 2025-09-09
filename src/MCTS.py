@@ -106,7 +106,7 @@ class MCTS:
         total = sum(prob for _, prob in action_probs)
         if total > 0:
             action_probs = [(move, prob/total) for move, prob in action_probs]
-        return action_probsg
+        return action_probs
 
     def _move_to_index(self, move):
         from_square, to_square = move
