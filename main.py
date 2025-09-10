@@ -27,4 +27,6 @@ def main():
         visualizer.generate_report()
         visualizer.save_plots()
 
+if __name__ == '__main__':
+    main()
 
