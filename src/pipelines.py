@@ -365,7 +365,7 @@ def ProcessPGN(games):
 
 class TrainingPipeline:
     def __init__(self, model, num_workers= 4, games_per_iterations= 100, iterations= 1000, buffer= 100000, batch_size= 1024,
-                 supervised_epochs= 10, supervised_batch_size= 512):
+                 supervised_epochs= 10, supervised_batch_size= 512, visualizer= None):
         self.model = model
         self.num_workers = num_workers
         self.games_per_iterations = games_per_iterations
@@ -381,7 +381,7 @@ class TrainingPipeline:
         self.best_win_rate = 0
         self.best_model_path = None
 
-        self.visualizer = Visualizer()
+        self.visualizer = visualizer if visualizer else Visualizer()
 
     def evaluate(self):
         wins = 0
