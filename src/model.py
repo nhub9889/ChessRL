@@ -32,29 +32,29 @@ class Net(nn.Module):
         self.fc_value1 = nn.Linear(1*8*8, 256)
         self.fc_value2 = nn.Linear(256, 1)
 
-        def forward(self, x):
-            x = torch.relu(self.bn_input(self.conv_input(x)))
+    def forward(self, x):
+        x = torch.relu(self.bn_input(self.conv_input(x)))
 
-            #Residual blocks
-            for res_block in self.res_blocks:
-                residual = x
-                x = res_block(x)
-                x += residual
-                x = torch.relu(x)
+        #Residual blocks
+        for res_block in self.res_blocks:
+            residual = x
+            x = res_block(x)
+            x += residual
+            x = torch.relu(x)
 
-            #Policy head
-            policy = torch.relu(self.bn_policy(self.conv_policy(x)))
-            policy = policy.view(policy.size(0), -1)
-            policy = self.fc_policy(policy)
-            policy = torch.softmax(policy, dim= 1)
+        #Policy head
+        policy = torch.relu(self.bn_policy(self.conv_policy(x)))
+        policy = policy.view(policy.size(0), -1)
+        policy = self.fc_policy(policy)
+        policy = torch.softmax(policy, dim= 1)
 
-            #value head
-            value = torch.relu(self.bn_value(self.conv_value(x)))
-            value = value.view(value.size(0), -1)
-            value = torch.relu(self.fc_value1(value))
-            value = torch.relu(self.fc_value2(value))
+        #value head
+        value = torch.relu(self.bn_value(self.conv_value(x)))
+        value = value.view(value.size(0), -1)
+        value = torch.relu(self.fc_value1(value))
+        value = torch.relu(self.fc_value2(value))
 
-            return policy, value
+        return policy, value
 
 class Model:
     def __init__(self, input_channels, actions, device= 'cuda', lr= 0.01, weight_decay= 1e-4):
@@ -85,7 +85,7 @@ class Model:
         board_tensor[12, :, :] = 1 if state.board.curPlayer == 'W' else 0
         return torch.from_numpy(board_tensor).unsqueeze(0)
     def train(self, states, target_policies, target_values):
-        states= torch.stack([self._state_to_tensor(s) for s in states]).to(self.device)
+        states = torch.stack([self._state_to_tensor(s) for s in states]).to(self.device)
         target_policies = torch.tensor(target_policies).to(self.device)
         target_values = torch.tensor(target_values).float().to(self.device)
 
