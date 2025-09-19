@@ -1,7 +1,8 @@
 import torch
 import argparse
-from src.pipelines import TrainingPipeline, Visualizer
+from src.pipelines import TrainingPipeline
 from src.model import Model
+from src.visualizer import Visualizer
 
 parser = argparse.ArgumentParser(description= 'Model chess base on AlphaGo')
 parser.add_argument('--train', type= bool, default= True, dest= 'flag')
