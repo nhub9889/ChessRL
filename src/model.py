@@ -85,7 +85,10 @@ class Model:
         board_tensor[12, :, :] = 1 if state.board.curPlayer == 'W' else 0
         return torch.from_numpy(board_tensor).unsqueeze(0)
     def train(self, states, target_policies, target_values):
-        states = torch.stack([self._state_to_tensor(s) for s in states]).to(self.device)
+        if isinstance(states[0], torch.Tensor):
+            states = torch.stack(states).to(self.device)
+        else:
+            states = torch.stack([self._state_to_tensor(s) for s in states]).to(self.device)
         target_policies = torch.tensor(target_policies).to(self.device)
         target_values = torch.tensor(target_values).float().to(self.device)
 
