@@ -6,7 +6,7 @@ from UI.pieces import Board, Pawn, Queen
 from collections import deque
 import torch.nn as nn
 import chess.pgn
-from visualizer import Visualizer
+from src.visualizer import Visualizer
 
 class ChessState:
     def __init__(self, board):
