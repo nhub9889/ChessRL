@@ -86,10 +86,10 @@ class Model:
         return torch.from_numpy(board_tensor).unsqueeze(0)
     def train(self, states, target_policies, target_values):
         if isinstance(states[0], torch.Tensor):
-            states = torch.stack(states).to(self.device)
+            states = states.to(self.device)
         elif isinstance(states, list) and all(isinstance(s, torch.Tensor) for s in states):
             states = torch.stack(states).to(self.device)
-        else:
+        elif isinstance(states, list) and all(hasattr(s, 'board') for s in states):
             states = torch.stack([self._state_to_tensor(s) for s in states]).to(self.device)
         target_policies = torch.tensor(target_policies).to(self.device)
         target_values = torch.tensor(target_values).float().to(self.device)
