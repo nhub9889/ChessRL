@@ -10,7 +10,7 @@ class MCTSNode():
         self.prior = prior
         self.visits = 0
         self.value = 0.0
-        self.children = []
+        self.children = {}
         self.outcome = None
 
     def isExpanded(self):
@@ -38,7 +38,7 @@ class MCTSNode():
             if child.visits == 0:
                 score = exploration_weight*child.prior*math.sqrt(self.visits)/ 1
             else:
-                score = child.value() + exploration_weight*child.prior * math.sqrt(self.visits) / (1 + child.visit)
+                score = child.value() + exploration_weight*child.prior * math.sqrt(self.visits) / (1 + child.visits)
             if score > bscore:
                 bscore = score
                 baction = action

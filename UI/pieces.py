@@ -20,6 +20,17 @@ class Board():
 
         return True
 
+    def getResult(self):
+        if self.checkmate('W'):
+            return 'Black wins by checkmate'
+        elif self.checkmate('B'):
+            return 'White wins by checkmate'
+        elif self.stalemate('W') or self.stalemate('B'):
+            return 'Draw by stalemate'
+
+        else:
+            return None
+
     def toDict(self):
         board_dict = {
             'squares': [[None for _ in range(8)] for _ in range(8)],
@@ -252,7 +263,18 @@ class Piece():
         self.pic = f'/static/ChessAssets/{piece_type}{"W" if color == "W" else "B"}.png'
 
     def __repr__(self):
-        return f"{self.color}{self.__class__.__name__[0]}"
+        # Standard chess piece abbreviations
+        abbreviations = {
+            'King': 'K',
+            'Queen': 'Q',
+            'Rook': 'R',
+            'Bishop': 'B',
+            'Knight': 'N',
+            'Pawn': 'P'
+        }
+        class_name = self.__class__.__name__
+        abbreviation = abbreviations.get(class_name, class_name[0])
+        return f"{self.color}{abbreviation}"
 
     def move(self, x, y):
         self.x = x

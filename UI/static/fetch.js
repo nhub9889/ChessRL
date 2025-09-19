@@ -1,6 +1,6 @@
 let selectedPiece = null;
 let validMoves = [];
-
+let gameOver = false;
 function initBoard(){
     fetch('/new_game').then(res => res.json())
         .then(data => {
@@ -77,8 +77,10 @@ function updateCaptured(capturedPieces, color){
     if (!capturedPieces) return;
 
     capturedPieces.forEach(pieceCode => {
+        const pieceTypeCode = pieceCode[1];
         const pieceColor = pieceCode[0] === 'W' ? 'white' : 'black';
-        const type = getPiece(pieceCode[1]);
+
+        const type = getPiece(pieceTypeCode);
 
         if (type){
             const img = document.createElement('img');
@@ -140,8 +142,29 @@ function handlePieceClick(e){
     e.stopPropagation();
 }
 
+function showNotification(message){
+    const notification = document.createElement('div');
+    notification.className = 'notification';
+    notification.innerHTML = `
+        <div class= "game-over">
+            <h2> Game Over </h2>
+            <p>${message}</p>
+            <button id='new-game'> New Game </button>
+        </div>`;
+
+    notification.querySelector('#new-game').addEventListener('click', () =>{
+        notification.remove();
+        initBoard();
+        gameOver = false;
+        document.querySelectorAll('.piece, .square').forEach(e => {
+            e.style.pointerEvent = 'auto';
+        });
+    });
+    document.body.appendChild(notification)
+}
+
 function handleSquareClick(e){
-    if (!selectedPiece) return;
+    if (!selectedPiece || gameOver) return;
 
     const square = e.target.classList.contains('square') ? e.target : e.target.parentElement;
     const x = parseInt(square.dataset.x);
@@ -169,15 +192,14 @@ function handleSquareClick(e){
                 renderBoard(data.board);
 
                 if (data.result === 'checkmate') {
-                    document.getElementById('status').textContent = `Checkmate! ${data.winner} wins!`;
-                    document.querySelectorAll('.piece, .square').forEach(el => {
-                        el.style.pointerEvents = 'none';
-                    });
+                    const message = `Checkmate ${data.winner} wins`;
+                    showNotification(message)
+                    gameOver = true;
                 } else if (data.result === 'stalemate') {
-                    document.getElementById('status').textContent = 'Stalemate! The game is a draw.';
-                    document.querySelectorAll('.piece, .square').forEach(el => {
-                        el.style.pointerEvents = 'none';
-                    });
+                    const message = 'Stalemate! The game is a draw';
+                    document.getElementById('status').textContent = message;
+                    gameOver = true;
+                    showNotification(message)
                 }
             }
             if (selectedPiece && selectedPiece.element) {

@@ -27,9 +27,6 @@ def makeMove():
     fr = data.get('from')
     to = data.get('to')
 
-    if not fr or not to:
-        return jsonify({'error': 'Invalid move parameters'})
-
     frx = ord(fr[0]) - ord('a')
     fry = 8 - int(fr[1])
     tox = ord(to[0]) - ord('a')
@@ -47,6 +44,7 @@ def makeMove():
             'to': to,
             'player': 'human'
         })
+
         response = {'success': True, 'board': currentBoard.toDict()}
         if currentBoard.checkmate('W'):
             response.update({'result': 'checkmate', 'winner': 'black'})
@@ -54,6 +52,7 @@ def makeMove():
             response.update({'result': 'checkmate', 'winner': 'white'})
 
         return jsonify(response)
+    return jsonify({'success': False})
 
 
 @app.route('/new_game')
@@ -67,6 +66,11 @@ def new_game():
 @app.route('/history')
 def history():
     return jsonify(history)
+
+@app.route('/bot_move')
+def bot_move():
+    return None
+
 
 @app.route('/valid_moves', methods =['GET'])
 def valid_moves():
