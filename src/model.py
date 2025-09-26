@@ -59,12 +59,11 @@ class Net(nn.Module):
 
 class Model:
     def __init__(self, input_channels, actions, device='cuda', lr=0.01, weight_decay=1e-4):
-        self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device(device)
         self.net = Net(input_channels, actions).to(self.device)
         self.optimizer = optim.Adam(self.net.parameters(), lr=lr, weight_decay=weight_decay)
 
     def predict(self, state):
-        # Handle both tensor and chess state inputs
         if not isinstance(state, torch.Tensor):
             state_tensor = self.state_to_tensor(state)
         else:
@@ -76,7 +75,6 @@ class Model:
         return policy.cpu().numpy()[0], value.cpu().numpy()[0][0]
 
     def state_to_tensor(self, chess_state):
-        # Convert a chess state object to a tensor
         board_tensor = np.zeros((18, 8, 8), dtype=np.float32)
         piece_channels = {
             'pawn': 0, 'knight': 1, 'bishop': 2, 'rook': 3, 'queen': 4, 'king': 5

@@ -246,9 +246,9 @@ class TrainingPipeline:
             num_batches = 0
 
             for idx, (batch_states, batch_policies, batch_values) in enumerate(dataloader):
-                batch_states = batch_states.to(self.model.device)
-                batch_policies = batch_policies.to(self.model.device)
-                batch_values = batch_values.to(self.model.device)
+                batch_states_list = [batch_states[i] for i in range(batch_states.size(0))]
+                batch_policies_list = [batch_policies[i] for i in range(batch_policies.size(0))]
+                batch_values_list = [batch_values[i] for i in range(batch_values.size(0))]
 
                 # Train on batch
                 loss = self.model.train(batch_states, batch_policies, batch_values)
