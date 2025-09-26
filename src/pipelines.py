@@ -251,7 +251,7 @@ class TrainingPipeline:
                 batch_values_list = [batch_values[i] for i in range(batch_values.size(0))]
 
                 # Train on batch
-                loss = self.model.train(batch_states, batch_policies, batch_values)
+                loss = self.model.train(batch_states_list, batch_policies_list, batch_values_list)
                 total_loss += loss
                 num_batches += 1
 
