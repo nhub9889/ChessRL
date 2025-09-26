@@ -94,35 +94,39 @@ class Model:
         return torch.from_numpy(board_tensor).unsqueeze(0).to(self.device)
 
     def train(self, states, target_policies, target_values):
-        # Handle both tensor and chess state inputs
-        if isinstance(states[0], torch.Tensor):
-            # States are already tensors
-            state_tensors = torch.stack(states).to(self.device)
+        # Convert states to tensors if they aren't already
+        if not isinstance(states[0], torch.Tensor):
+            state_tensors = torch.stack([self.state_to_tensor(s) for s in states])
         else:
-            # States are chess state objects, convert to tensors
-            state_tensors = torch.stack([self.state_to_tensor(s) for s in states]).to(self.device)
-        if isinstance(target_policies[0], torch.Tensor):
-            # If already tensors, stack them
-            target_policies = torch.stack(target_policies).to(self.device)
-        else:
-            # Convert from numpy arrays or lists to tensor
-            target_policies = torch.tensor(np.array(target_policies)).to(self.device)
+            state_tensors = torch.stack(states)
 
-            # Handle target_values - they could be lists of tensors or lists of scalars
-        if isinstance(target_values[0], torch.Tensor):
-            # If already tensors, stack them and squeeze to remove extra dimensions
-            target_values = torch.stack(target_values).squeeze().float().to(self.device)
-        else:
-            # Convert from scalars to tensor
-            target_values = torch.tensor(target_values).float().to(self.device)
+        state_tensors = state_tensors.to(self.device)
 
+        # Convert target_policies to tensor
+        if not isinstance(target_policies[0], torch.Tensor):
+            target_policies = torch.tensor(np.array(target_policies), dtype=torch.float32)
+        else:
+            target_policies = torch.stack(target_policies)
+
+        target_policies = target_policies.to(self.device)
+
+        # Convert target_values to tensor
+        if not isinstance(target_values[0], torch.Tensor):
+            target_values = torch.tensor(target_values, dtype=torch.float32)
+        else:
+            target_values = torch.stack(target_values).squeeze()
+
+        target_values = target_values.to(self.device)
+
+        # Forward pass
         policies, values = self.net(state_tensors)
 
         # Calculate losses
         value_loss = torch.mean((target_values - values.squeeze()) ** 2)
-        policy_loss = -torch.mean(torch.sum(target_policies * torch.log_softmax(policies, dim=1), dim=1))
-        regularization_loss = torch.sum(torch.tensor([torch.sum(p ** 2) for p in self.net.parameters()]))
-        total_loss = value_loss + policy_loss + 1e-4 * regularization_loss
+        policy_loss = -torch.mean(torch.sum(target_policies * torch.log(policies + 1e-8), dim=1))
+
+        # Use weight decay from optimizer instead of manual regularization
+        total_loss = value_loss + policy_loss
 
         # Backward pass
         self.optimizer.zero_grad()

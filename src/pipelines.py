@@ -78,23 +78,31 @@ class SelfPlay:
         count = 0
 
         while not state.isTerminal() and count < self.max_moves:
+            # FIXED: Now mcts.run() returns only action_probs, not a tuple
             action_probs = self.mcts.run(state)
 
+            if not action_probs:  # No legal moves or terminal state
+                break
+
+            # Apply temperature to visit counts
+            visits = np.array([count for count in action_probs.values()])
+
             if self.temperature > 0:
-                visits = np.array([count for count in action_probs.values()])
                 probs = visits ** (1 / self.temperature)
                 probs /= probs.sum()
             else:
-                probs = np.array([prob for prob in action_probs.values()])
-                probs /= probs.sum()
+                probs = visits / visits.sum()
 
             states.append(state)
+
+            # Create policy vector
             vector_policy = np.zeros(64 * 64)
             for (from_pos, to_pos), prob in action_probs.items():
                 idx = from_pos[0] * 8 * 64 + from_pos[1] * 64 + to_pos[0] * 8 + to_pos[1]
                 vector_policy[idx] = prob
             mcts_policies.append(vector_policy)
 
+            # Select action
             actions = list(action_probs.keys())
             action = random.choices(actions, weights=probs)[0]
 
@@ -102,13 +110,15 @@ class SelfPlay:
             count += 1
 
         outcome = state.get_reward()
-        training = []
+        training_data = []
+
         for i, (state, policy) in enumerate(zip(states, mcts_policies)):
+            # Determine the outcome from the perspective of the player who made the move
             player_outcome = outcome if (i % 2 == 0 and currentPlayer == 'W') or (
                         i % 2 == 1 and currentPlayer == 'B') else -outcome
-            training.append((state, policy, player_outcome))
+            training_data.append((state, policy, player_outcome))
 
-        return training
+        return training_data
 
 
 def LoadPGN(path, num_games=100000):
