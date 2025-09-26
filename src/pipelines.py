@@ -16,22 +16,39 @@ import csv
 import os
 import math
 from src.visualizer import Visualizer
+import concurrent.futures
+from functools import lru_cache
 
 
 class ChessState:
     def __init__(self, board):
         self.board = board
         self.current_player = board.curPlayer
+        self._legal_moves_cache = None
 
     def legal_moves(self):
+        if self._legal_moves_cache is not None:
+            return self._legal_moves_cache
+
         legal_moves = []
-        for x in range(8):
-            for y in range(8):
-                piece = self.board.getPiece(x, y)
-                if piece and piece.color == self.current_player:
-                    moves = self.board.validMoves(x, y)
-                    for move in moves:
-                        legal_moves.append(((x, y), move))
+
+        def get_moves_for_square(x, y):
+            piece = self.board.getPiece(x, y)
+            if piece and piece.color == self.current_player:
+                moves = self.board.validMoves(x, y)
+                return [((x, y), move) for move in moves]
+            return []
+
+        tasks = [(x, y) for x in range(8) for y in range(8)]
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(lambda args: get_moves_for_square(*args), tasks))
+
+        for result in results:
+            if result:
+                legal_moves.extend(result)
+
+        self._legal_moves_cache = legal_moves
         return legal_moves
 
     def isTerminal(self):
@@ -183,8 +200,9 @@ def ProcessPGN(games):
 
 
 class TrainingPipeline:
-    def __init__(self, model, num_workers=4, games_per_iteration=100, iterations=1000, buffer=100000, batch_size=1024,
-                 supervised_epochs=10, supervised_batch_size=512, visualizer=None):
+    def __init__(self, model, num_workers=4, games_per_iteration=50, iterations=1000, buffer=200000,
+                 batch_size=8192,  # TĂNG từ 1024 lên 8192 (vừa đủ cho 12GB)
+                 supervised_epochs=10, supervised_batch_size=2048, visualizer=None):
         self.model = model
         self.num_workers = num_workers
         self.games_per_iteration = games_per_iteration
@@ -194,12 +212,11 @@ class TrainingPipeline:
         self.supervised_batch_size = supervised_batch_size
         self.iterations = iterations
         self.replay = deque(maxlen=buffer)
-        self.workers = [SelfPlay(model) for _ in range(num_workers)]
+        self.workers = [SelfPlay(model, simulations=400) for _ in range(num_workers)]
 
         self.iteration = 0
         self.best_win_rate = 0
         self.best_model_path = None
-
         self.visualizer = visualizer if visualizer else Visualizer()
 
     def evaluate(self):
@@ -284,28 +301,40 @@ class TrainingPipeline:
         print("Supervised training completed!")
 
     def train(self):
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            gpu_mem = torch.cuda.memory_allocated() / 1024 ** 3
+            print(f"GPU Memory before iteration: {gpu_mem:.1f}GB")
+
         for iteration in range(self.iterations):
             print(f"Iteration {iteration + 1}/{self.iterations}")
+
+            if torch.cuda.is_available() and iteration % 10 == 0:
+                gpu_mem = torch.cuda.memory_allocated() / 1024 ** 3
+                print(f"GPU Memory: {gpu_mem:.1f}GB")
+
             all_data = []
             game_lengths = []
 
+            games_per_worker = max(1, self.games_per_iteration // self.num_workers)
             for worker in self.workers:
-                for _ in range(self.games_per_iteration // self.num_workers):
+                for _ in range(games_per_worker):
                     game_data = worker.play()
                     all_data.extend(game_data)
-
                     if game_data:
                         game_lengths.append(len(game_data))
 
             self.replay.extend(all_data)
 
             loss = None
+
             if len(self.replay) >= self.batch_size:
-                batch = random.sample(self.replay, self.batch_size)
+                batch_size_actual = min(len(self.replay), self.batch_size)
+                batch = random.sample(self.replay, batch_size_actual)
                 states, target_policies, target_values = zip(*batch)
 
                 loss = self.model.train(states, target_policies, target_values)
-                print(f"Training loss: {loss:.4f}")
+                print(f"Training loss: {loss:.4f}, Batch size: {batch_size_actual}")
 
             temperature = max(0.1, 1.0 - (iteration / self.iterations) * 0.9)
             for worker in self.workers:

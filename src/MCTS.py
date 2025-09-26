@@ -74,54 +74,63 @@ class MCTSNode():
 
 
 class MCTS:
-    def __init__(self, model, exploration_weight=1.0, simulations=800):
+    def __init__(self, model, exploration_weight=1.0, simulations=400):
         self.model = model
         self.exploration_weight = exploration_weight
         self.simulations = simulations
+        self.batch_size = 32
 
     def run(self, state):
         root = MCTSNode(state)
+        batch_nodes = []
+        batch_states = []
 
-        for _ in range(self.simulations):
+        for i in range(self.simulations):
             node = root
             path = [node]
 
             # Selection
             while node.isExpanded() and not node.isTerminal():
                 action, node = node.select(self.exploration_weight)
-                if node is None:  # No children available
+                if node is None:
                     break
                 path.append(node)
 
             if node is None or node.isTerminal():
-                # Terminal node or no moves available
                 if node and node.state:
                     leaf_value = node.state.get_reward()
                 else:
                     leaf_value = 0.0
+
+                # Backpropagation cho terminal nodes
+                for i, n in enumerate(reversed(path)):
+                    perspective_value = leaf_value if i % 2 == 0 else -leaf_value
+                    n.update_recursive(perspective_value)
             else:
-                # Expansion - get policy and value from model
-                policy, value = self.model.predict(node.state)
-                action_probs = self._get_action_probs(node.state, policy)
-                node.expand(action_probs)
-                leaf_value = value
+                batch_nodes.append((node, path))
+                batch_states.append(node.state)
 
-            # Backpropagation
-            for i, node in enumerate(reversed(path)):
-                # Alternate perspective for opponent
-                perspective_value = leaf_value if i % 2 == 0 else -leaf_value
-                node.update_recursive(perspective_value)
+                if len(batch_states) >= self.batch_size or i == self.simulations - 1:
+                    if batch_states:
+                        # Batch inference
+                        batch_policies, batch_values = self.model.batch_predict(batch_states)
 
-        # Return action probabilities
-        action_probs = {
-            action: child.visits
-            for action, child in root.children.items()
-        }
+                        for (node, path), policy, value in zip(batch_nodes, batch_policies, batch_values):
+                            action_probs = self._get_action_probs(node.state, policy)
+                            node.expand(action_probs)
 
+                            # Backpropagation
+                            for i, n in enumerate(reversed(path)):
+                                perspective_value = value if i % 2 == 0 else -value
+                                n.update_recursive(perspective_value)
+
+                        batch_nodes = []
+                        batch_states = []
+
+        action_probs = {action: child.visits for action, child in root.children.items()}
         total_visits = sum(action_probs.values())
         if total_visits > 0:
             action_probs = {action: count / total_visits for action, count in action_probs.items()}
-
         return action_probs
 
     def _get_action_probs(self, state, policy):

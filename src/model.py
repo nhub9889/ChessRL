@@ -56,12 +56,14 @@ class Net(nn.Module):
 
         return policy, value
 
-
 class Model:
-    def __init__(self, input_channels, actions, device='cuda', lr=0.01, weight_decay=1e-4):
+    def __init__(self, input_channels, actions, device='cuda', lr=1e-3, weight_decay=1e-4):
         self.device = torch.device(device)
         self.net = Net(input_channels, actions).to(self.device)
         self.optimizer = optim.Adam(self.net.parameters(), lr=lr, weight_decay=weight_decay)
+        self.scaler = torch.cuda.amp.GradScaler()
+        self.accumulation_steps = 2
+        self.optimizer_step = 0
 
     def predict(self, state):
         if not isinstance(state, torch.Tensor):
@@ -74,8 +76,28 @@ class Model:
 
         return policy.cpu().numpy()[0], value.cpu().numpy()[0][0]
 
+    def batch_predict(self, states):
+        if not states:
+            return [], []
+
+        state_tensors = []
+        for state in states:
+            if not isinstance(state, torch.Tensor):
+                state_tensor = self.state_to_tensor(state)
+            else:
+                state_tensor = state
+            state_tensors.append(state_tensor)
+
+        state_tensors = torch.cat(state_tensors, dim=0).to(self.device, non_blocking=True)
+
+        with torch.no_grad():
+            with torch.cuda.amp.autocast():
+                policies, values = self.net(state_tensors)
+
+        return policies.cpu().numpy(), values.cpu().numpy().flatten()
     def state_to_tensor(self, chess_state):
-        board_tensor = np.zeros((18, 8, 8), dtype=np.float32)
+        board_tensor = torch.zeros((1, 18, 8, 8), device=self.device)
+
         piece_channels = {
             'pawn': 0, 'knight': 1, 'bishop': 2, 'rook': 3, 'queen': 4, 'king': 5
         }
@@ -88,52 +110,53 @@ class Model:
                     color_idx = 0 if piece.color == 'W' else 1
                     if piece_type in piece_channels:
                         channel = piece_channels[piece_type] + color_idx * 6
-                        board_tensor[channel, x, y] = 1
+                        board_tensor[0, channel, x, y] = 1
 
-        board_tensor[12, :, :] = 1 if chess_state.board.curPlayer == 'W' else 0
-        return torch.from_numpy(board_tensor).unsqueeze(0).to(self.device)
+        board_tensor[0, 12, :, :] = 1 if chess_state.board.curPlayer == 'W' else 0
+        return board_tensor
 
     def train(self, states, target_policies, target_values):
-        # Convert states to tensors if they aren't already
-        if not isinstance(states[0], torch.Tensor):
-            state_tensors = torch.stack([self.state_to_tensor(s) for s in states])
-        else:
-            state_tensors = torch.stack(states)
+        state_tensors = []
+        for state in states:
+            if not isinstance(state, torch.Tensor):
+                state_tensor = self.state_to_tensor(state)
+            else:
+                state_tensor = state
+            state_tensors.append(state_tensor)
 
-        state_tensors = state_tensors.to(self.device)
+        state_tensors = torch.cat(state_tensors, dim=0)
+        state_tensors = state_tensors.to(self.device, non_blocking=True)
 
-        # Convert target_policies to tensor
         if not isinstance(target_policies[0], torch.Tensor):
             target_policies = torch.tensor(np.array(target_policies), dtype=torch.float32)
         else:
             target_policies = torch.stack(target_policies)
+        target_policies = target_policies.to(self.device, non_blocking=True)
 
-        target_policies = target_policies.to(self.device)
-
-        # Convert target_values to tensor
         if not isinstance(target_values[0], torch.Tensor):
             target_values = torch.tensor(target_values, dtype=torch.float32)
         else:
-            target_values = torch.stack(target_values).squeeze()
+            target_values = torch.stack(target_values)
+        target_values = target_values.to(self.device, non_blocking=True)
 
-        target_values = target_values.to(self.device)
+        # Mixed precision training
+        with torch.cuda.amp.autocast():
+            policies, values = self.net(state_tensors)
+            value_loss = torch.mean((target_values - values.squeeze()) ** 2)
+            policy_loss = -torch.mean(torch.sum(target_policies * torch.log(policies + 1e-8), dim=1))
+            total_loss = (value_loss + policy_loss) / self.accumulation_steps
 
-        # Forward pass
-        policies, values = self.net(state_tensors)
+        # Gradient accumulation
+        self.scaler.scale(total_loss).backward()
 
-        # Calculate losses
-        value_loss = torch.mean((target_values - values.squeeze()) ** 2)
-        policy_loss = -torch.mean(torch.sum(target_policies * torch.log(policies + 1e-8), dim=1))
+        if (self.optimizer_step + 1) % self.accumulation_steps == 0:
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad()
 
-        # Use weight decay from optimizer instead of manual regularization
-        total_loss = value_loss + policy_loss
+        self.optimizer_step = (self.optimizer_step + 1) % self.accumulation_steps
 
-        # Backward pass
-        self.optimizer.zero_grad()
-        total_loss.backward()
-        self.optimizer.step()
-
-        return total_loss.item()
+        return total_loss.item() * self.accumulation_steps
 
     def save(self, path):
         torch.save({
