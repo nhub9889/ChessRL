@@ -96,7 +96,7 @@ class MCTS:
             return action_probs, root.children[max(action_probs, key= action_probs.get)].action
 
     def _get_action_probs(self, state, policy):
-        legal_moves = state.getLegalMoves()
+        legal_moves = state.legal_moves()
         action_probs = []
         policy = torch.softmax(torch.tensor(policy), dim= 1).numpy()
         for move in legal_moves:
