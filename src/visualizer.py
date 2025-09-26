@@ -137,16 +137,16 @@ class Visualizer:
         plt.pause(0.01)
 
     def save_plots(self):
-        path = os.path.join(self.dir, f"training_plots_{datetime.now().strftime('%Y%m%d-%H%M')}.png")
+        path = os.path.join(self.dir, f"training_plots_{datetime.datetime.now().strftime('%Y%m%d-%H%M')}.png")
         self.fig.savefig(path)
         print(f"Plots saved to {path}")
 
     def generate_report(self):
-        path = os.path.join(self.dir, f"training_report_{datetime.now().strftime('%Y%m%d-%H')}.txt")
+        path = os.path.join(self.dir, f"training_report_{datetime.datetime.now().strftime('%Y%m%d-%H')}.txt")
         with open(path, 'w') as file:
             file.write("Training report \n")
             file.write("==============================\n\n")
-            file.write(f"Generated on: {datetime.now().strftime('%Y%m%d-%H')}\n \n")
+            file.write(f"Generated on: {datetime.datetime.now().strftime('%Y%m%d-%H')}\n \n")
             file.write("Training statistics: \n")
             file.write(f"Total iterations: {len(self.metrics['iteration'])} \n")
 
@@ -171,8 +171,8 @@ class Visualizer:
                 file.write(f"Losses: {total_losses} ({total_losses / total_games * 100:.1f}%)\n")
 
             if len(self.metrics['timestamp']) > 1:
-                start_time = datetime.strptime(self.metrics['timestamp'][0], "%Y-%m-%d %H:%M:%S")
-                end_time = datetime.strptime(self.metrics['timestamp'][-1], "%Y-%m-%d %H:%M:%S")
+                start_time = datetime.datetime.strptime(self.metrics['timestamp'][0], "%Y-%m-%d %H:%M:%S")
+                end_time = datetime.datetime.strptime(self.metrics['timestamp'][-1], "%Y-%m-%d %H:%M:%S")
                 duration = end_time - start_time
 
                 file.write(f"\nTraining duration: {duration} \n")
@@ -189,7 +189,7 @@ class Visualizer:
         self.metrics['policy_loss'].append(policy_loss)
         self.metrics['game_length'].append(game_length)
         self.metrics['exploration_rate'].append(exploration_rate)
-        self.metrics['timestamp'].append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        self.metrics['timestamp'].append(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
         if eval_results:
             self.metrics['eval_wins'].append(eval_results['wins'])
@@ -207,5 +207,5 @@ class Visualizer:
                              eval_results['losses'] if eval_results else None,
                              eval_results['draws'] if eval_results else None,
                              game_length, exploration_rate,
-                             datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+                             datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
         self.update_plots()
