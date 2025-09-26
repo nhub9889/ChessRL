@@ -101,9 +101,20 @@ class Model:
         else:
             # States are chess state objects, convert to tensors
             state_tensors = torch.stack([self.state_to_tensor(s) for s in states]).to(self.device)
+        if isinstance(target_policies[0], torch.Tensor):
+            # If already tensors, stack them
+            target_policies = torch.stack(target_policies).to(self.device)
+        else:
+            # Convert from numpy arrays or lists to tensor
+            target_policies = torch.tensor(np.array(target_policies)).to(self.device)
 
-        target_policies = torch.tensor(target_policies).to(self.device)
-        target_values = torch.tensor(target_values).float().to(self.device)
+            # Handle target_values - they could be lists of tensors or lists of scalars
+        if isinstance(target_values[0], torch.Tensor):
+            # If already tensors, stack them and squeeze to remove extra dimensions
+            target_values = torch.stack(target_values).squeeze().float().to(self.device)
+        else:
+            # Convert from scalars to tensor
+            target_values = torch.tensor(target_values).float().to(self.device)
 
         policies, values = self.net(state_tensors)
 
