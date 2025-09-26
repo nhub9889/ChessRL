@@ -52,7 +52,7 @@ class Net(nn.Module):
         value = torch.relu(self.bn_value(self.conv_value(x)))
         value = value.view(value.size(0), -1)
         value = torch.relu(self.fc_value1(value))
-        value = torch.tanh(self.fc_value2(value))
+        value = torch.relu(self.fc_value2(value))
 
         return policy, value
 

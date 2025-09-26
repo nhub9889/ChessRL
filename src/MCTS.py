@@ -98,14 +98,27 @@ class MCTS:
     def _get_action_probs(self, state, policy):
         legal_moves = state.legal_moves()
         action_probs = []
-        policy = torch.softmax(torch.tensor(policy), dim= 1).numpy()
+
+        policy_tensor = torch.tensor(policy)
+        if policy_tensor.dim() == 1:
+            policy_probs = torch.softmax(policy_tensor, dim=0).numpy()
+        else:
+            policy_probs = torch.softmax(policy_tensor, dim=1).numpy()[0]
+
         for move in legal_moves:
             idx = self._move_to_index(move)
-            action_probs.append((move, policy[idx]))
+            if idx < len(policy_probs):
+                action_probs.append((move, policy_probs[idx]))
+            else:
+                action_probs.append((move, 1e-8))
 
         total = sum(prob for _, prob in action_probs)
         if total > 0:
-            action_probs = [(move, prob/total) for move, prob in action_probs]
+            action_probs = [(move, prob / total) for move, prob in action_probs]
+        else:
+            uniform_prob = 1.0 / len(legal_moves) if legal_moves else 0
+            action_probs = [(move, uniform_prob) for move in legal_moves]
+
         return action_probs
 
     def _move_to_index(self, move):
