@@ -352,15 +352,14 @@ class TrainingPipeline:
                     self.model.save(self.best_model_path)
                     print(f"Best model saved with win rate: {win_rate:.2f}")
 
-            # Update visualizer
-            avg_length = np.mean(game_lengths) if game_lengths else None
-            self.visualizer.update_metrics(
-                iteration=self.iteration,
-                reinforcement_loss=loss,
-                eval_results=eval_results,
-                game_length=avg_length,
-                exploration_rate=temperature
-            )
+                avg_length = np.mean(game_lengths) if game_lengths else None
+                self.visualizer.update_metrics(
+                    iteration=self.iteration,
+                    reinforcement_loss=loss,
+                    eval_results=eval_results,
+                    game_length=avg_length,
+                    exploration_rate=temperature
+                )
 
             if (iteration + 1) % 10 == 0:
                 self.model.save(f"ChessRL_{iteration + 1}.pth")

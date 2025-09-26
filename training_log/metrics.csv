@@ -1,0 +1,1 @@
+iteration,supervised_loss,reinforcement_loss,value_loss,policy_loss,eval_wins,eval_draws,eval_losses,game_length,exploration_rate,timestamp
