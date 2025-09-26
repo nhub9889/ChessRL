@@ -9,7 +9,7 @@ class MCTSNode():
         self.action = action
         self.prior = prior
         self.visits = 0
-        self.value = 0.0
+        self.value_sum = 0.0  # Renamed from 'value' to avoid conflict
         self.children = {}
         self.outcome = None
 
@@ -17,7 +17,9 @@ class MCTSNode():
         return len(self.children) > 0
 
     def isTerminal(self):
-        return self.outcome is not None
+        if self.state is None:
+            return False
+        return self.state.isTerminal()
 
     def expand(self, action_probs):
         for action, prob in action_probs:
@@ -41,10 +43,11 @@ class MCTSNode():
         best_child = None
 
         for action, child in self.children.items():
+            # FIXED: Use get_value() method instead of value() call
             if child.visits == 0:
                 ucb_score = exploration_weight * child.prior * math.sqrt(self.visits + 1e-8)
             else:
-                ucb_score = child.value() + exploration_weight * child.prior * math.sqrt(self.visits) / (
+                ucb_score = child.get_value() + exploration_weight * child.prior * math.sqrt(self.visits) / (
                             1 + child.visits)
 
             if ucb_score > best_score:
@@ -54,14 +57,14 @@ class MCTSNode():
 
         return best_action, best_child
 
-    def value(self):
+    def get_value(self):  # Renamed from value() to avoid conflict
         if self.visits == 0:
             return 0.0
-        return self.value / self.visits
+        return self.value_sum / self.visits
 
     def update(self, value):
         self.visits += 1
-        self.value += value
+        self.value_sum += value
 
     def update_recursive(self, value):
         self.update(value)
@@ -86,25 +89,28 @@ class MCTS:
             # Selection
             while node.isExpanded() and not node.isTerminal():
                 action, node = node.select(self.exploration_weight)
+                if node is None:  # No children available
+                    break
                 path.append(node)
 
-            # Expansion
-            if not node.isTerminal():
-                # Get policy and value from model
+            if node is None or node.isTerminal():
+                # Terminal node or no moves available
+                if node and node.state:
+                    leaf_value = node.state.get_reward()
+                else:
+                    leaf_value = 0.0
+            else:
+                # Expansion - get policy and value from model
                 policy, value = self.model.predict(node.state)
                 action_probs = self._get_action_probs(node.state, policy)
                 node.expand(action_probs)
-
-                # Simulation - use the value from the model
                 leaf_value = value
-            else:
-                # Terminal node
-                leaf_value = node.outcome
 
             # Backpropagation
-            for node in reversed(path):
-                node.update_recursive(leaf_value)
-                leaf_value = -leaf_value  # Alternate perspective for opponent
+            for i, node in enumerate(reversed(path)):
+                # Alternate perspective for opponent
+                perspective_value = leaf_value if i % 2 == 0 else -leaf_value
+                node.update_recursive(perspective_value)
 
         # Return action probabilities
         action_probs = {
@@ -116,7 +122,6 @@ class MCTS:
         if total_visits > 0:
             action_probs = {action: count / total_visits for action, count in action_probs.items()}
 
-        # Return only the action probabilities, not a tuple
         return action_probs
 
     def _get_action_probs(self, state, policy):
