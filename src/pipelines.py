@@ -201,7 +201,7 @@ def ProcessPGN(games):
 
 class TrainingPipeline:
     def __init__(self, model, num_workers=4, games_per_iteration=50, iterations=1000, buffer=200000,
-                 batch_size=8192,  # TĂNG từ 1024 lên 8192 (vừa đủ cho 12GB)
+                 batch_size=8192,
                  supervised_epochs=10, supervised_batch_size=2048, visualizer=None):
         self.model = model
         self.num_workers = num_workers

@@ -5,14 +5,12 @@ import numpy as np
 
 
 class Net(nn.Module):
-    def __init__(self, input_channels, actions, res_blocks=10, filters=256):
+    def __init__(self, input_channels, actions, res_blocks=20, filters=512):
         super(Net, self).__init__()
 
-        # Initial convolution
         self.conv_input = nn.Conv2d(input_channels, filters, kernel_size=3, padding=1)
         self.bn_input = nn.BatchNorm2d(filters)
 
-        # Residual blocks
         self.res_blocks = nn.ModuleList([nn.Sequential(
             nn.Conv2d(filters, filters, kernel_size=3, padding=1),
             nn.BatchNorm2d(filters),
@@ -21,39 +19,38 @@ class Net(nn.Module):
             nn.BatchNorm2d(filters)
         ) for _ in range(res_blocks)])
 
-        # Policy head
-        self.conv_policy = nn.Conv2d(filters, 2, kernel_size=1)
-        self.bn_policy = nn.BatchNorm2d(2)
-        self.fc_policy = nn.Linear(2 * 8 * 8, actions)
+        self.conv_policy = nn.Conv2d(filters, 4, kernel_size=1)
+        self.bn_policy = nn.BatchNorm2d(4)
+        self.fc_policy1 = nn.Linear(4 * 8 * 8, 512)
+        self.fc_policy2 = nn.Linear(512, actions)
 
-        # Value head
-        self.conv_value = nn.Conv2d(filters, 1, kernel_size=1)
-        self.bn_value = nn.BatchNorm2d(1)
-        self.fc_value1 = nn.Linear(1 * 8 * 8, 256)
-        self.fc_value2 = nn.Linear(256, 1)
+        # Value head - tăng kích thước
+        self.conv_value = nn.Conv2d(filters, 2, kernel_size=1)
+        self.bn_value = nn.BatchNorm2d(2)
+        self.fc_value1 = nn.Linear(2 * 8 * 8, 512)
+        self.fc_value2 = nn.Linear(512, 256)
+        self.fc_value3 = nn.Linear(256, 1)
 
     def forward(self, x):
         x = torch.relu(self.bn_input(self.conv_input(x)))
 
-        # Residual blocks
         for res_block in self.res_blocks:
             residual = x
             x = res_block(x)
             x += residual
             x = torch.relu(x)
 
-        # Policy head
         policy = torch.relu(self.bn_policy(self.conv_policy(x)))
         policy = policy.view(policy.size(0), -1)
-        policy = self.fc_policy(policy)
+        policy = torch.relu(self.fc_policy1(policy))
+        policy = self.fc_policy2(policy)
         policy = torch.softmax(policy, dim=1)
 
-        # Value head
         value = torch.relu(self.bn_value(self.conv_value(x)))
         value = value.view(value.size(0), -1)
         value = torch.relu(self.fc_value1(value))
         value = torch.relu(self.fc_value2(value))
-
+        value = torch.tanh(self.fc_value3(value))
         return policy, value
 
 class Model:
@@ -76,44 +73,41 @@ class Model:
 
         return policy.cpu().numpy()[0], value.cpu().numpy()[0][0]
 
-    def batch_predict(self, states):
-        if not states:
-            return [], []
-
-        state_tensors = []
-        for state in states:
-            if not isinstance(state, torch.Tensor):
-                state_tensor = self.state_to_tensor(state)
-            else:
-                state_tensor = state
-            state_tensors.append(state_tensor)
-
-        state_tensors = torch.cat(state_tensors, dim=0).to(self.device, non_blocking=True)
-
-        with torch.no_grad():
-            with torch.cuda.amp.autocast():
-                policies, values = self.net(state_tensors)
-
-        return policies.cpu().numpy(), values.cpu().numpy().flatten()
     def state_to_tensor(self, chess_state):
-        board_tensor = torch.zeros((1, 18, 8, 8), device=self.device)
+            board_tensor = np.zeros((18, 8, 8), dtype=np.float32)
+            piece_channels = {
+                'pawn': 0, 'knight': 1, 'bishop': 2, 'rook': 3, 'queen': 4, 'king': 5
+            }
 
-        piece_channels = {
-            'pawn': 0, 'knight': 1, 'bishop': 2, 'rook': 3, 'queen': 4, 'king': 5
-        }
+            for x in range(8):
+                for y in range(8):
+                    piece = chess_state.board.getPiece(x, y)
+                    if piece:
+                        piece_type = str(piece.__class__.__name__).lower()
+                        color_idx = 0 if piece.color == 'W' else 1
+                        if piece_type in piece_channels:
+                            channel = piece_channels[piece_type] + color_idx * 6
+                            board_tensor[channel, x, y] = 1
 
-        for x in range(8):
-            for y in range(8):
-                piece = chess_state.board.getPiece(x, y)
-                if piece:
-                    piece_type = str(piece.__class__.__name__).lower()
-                    color_idx = 0 if piece.color == 'W' else 1
-                    if piece_type in piece_channels:
-                        channel = piece_channels[piece_type] + color_idx * 6
-                        board_tensor[0, channel, x, y] = 1
+            board_tensor[12, :, :] = 1 if chess_state.board.curPlayer == 'W' else 0
+            return torch.from_numpy(board_tensor).unsqueeze(0).to(self.device)
 
-        board_tensor[0, 12, :, :] = 1 if chess_state.board.curPlayer == 'W' else 0
-        return board_tensor
+    def batch_predict(self, states):
+            if not states:
+                return [], []
+            state_tensors = []
+            for state in states:
+                if isinstance(state, torch.Tensor):
+                    state_tensors.append(state)
+                else:
+                    state_tensor = self.state_to_tensor(state)
+                    state_tensors.append(state_tensor)
+            state_batch = torch.cat(state_tensors, dim=0).to(self.device)
+
+            with torch.no_grad():
+                policies, values = self.net(state_batch)
+
+            return policies.cpu().numpy(), values.cpu().numpy().flatten()
 
     def train(self, states, target_policies, target_values):
         state_tensors = []
