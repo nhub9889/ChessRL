@@ -74,7 +74,7 @@ class MCTSNode():
 
 
 class MCTS:
-    def __init__(self, model, exploration_weight=1.0, simulations=800):
+    def __init__(self, model, exploration_weight=1.0, simulations=400):
         self.model = model
         self.exploration_weight = exploration_weight
         self.simulations = simulations
