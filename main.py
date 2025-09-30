@@ -15,8 +15,13 @@ parser.add_argument('--iterations', type = int, default= 2048)
 parser.add_argument('--supervised_epochs', type = int, default= 20)
 parser.add_argument('--supervised_batch_size', type = int, default= 64)
 parser.add_argument('--num_workers', type= int, default= 4)
-parser.add_argument('--simulations', type= int, default= 100)
-parser.add_argument('--max_moves', type= int, default= 100)
+parser.add_argument('--simulations_start', type= int, default= 100)
+parser.add_argument('--simulations_end', type= int, default= 300)
+parser.add_argument('--max_moves_start', type= int, default= 100)
+parser.add_argument('--max_moves_end', type= int, default= 300)
+parser.add_argument('--schedule_mode', type= str, default= 'decrease')
+parser.add_argument('--schedule_type', type= str, default= 'linear')
+parser.add_argument('--schedule_step', type= int, default= 800)
 def main():
     args = parser.parse_args()
     device = torch.device(args.device)
@@ -29,7 +34,11 @@ def main():
         pipeline = TrainingPipeline(model, batch_size= args.batch_size,
                                     supervised_batch_size= args.supervised_batch_size, num_workers= args.num_workers,
                                     supervised_epochs= args.supervised_epochs, iterations= args.iterations,
-                                    visualizer= visualizer, simulations= args.simulations, max_moves= args.max_moves)
+                                    visualizer= visualizer, simulations_start= args.simulations_start,
+                                    simulations_end= args.simulations_end,
+                                    max_moves_start= args.max_moves_start, max_moves_end= args.max_moves_end,
+                                    schedule_mode= args.schedule_mode, schedule_type= args.schedule_type,
+                                    schedule_steps= args.schedule_step)
         # pipeline.supervised_train(path)
 
         pipeline.train()
