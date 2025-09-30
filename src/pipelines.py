@@ -223,7 +223,8 @@ class TrainingPipeline:
         self.iterations = iterations
         self.replay = deque(maxlen=buffer)
         self.workers = [SelfPlay(model, simulations=400) for _ in range(num_workers)]
-        self.visualizer = Visualizer if visualizer != None else visualizer
+
+        self.visualizer = visualizer if visualizer else Visualizer()
         self.iteration = 0
         self.best_win_rate = 0
         self.best_model_path = None

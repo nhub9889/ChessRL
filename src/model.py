@@ -60,7 +60,7 @@ class Model:
         self.optimizer = optim.Adam(self.net.parameters(), lr=lr, weight_decay=weight_decay)
         self.scaler = torch.cuda.amp.GradScaler()
         self.accumulation_steps = 2
-        self.optimizer_step = (self.optimizer_step + 1) % self.accumulation_steps
+        self.optimizer_step = 0
 
     def predict(self, state):
         if not isinstance(state, torch.Tensor):
@@ -143,12 +143,11 @@ class Model:
         # Gradient accumulation
         self.scaler.scale(total_loss).backward()
 
-        if (self.optimizer_step + 1) % self.accumulation_steps == 0:
+        self.optimizer_step += 1
+        if self.optimizer_step % self.accumulation_steps == 0:
             self.scaler.step(self.optimizer)
             self.scaler.update()
             self.optimizer.zero_grad()
-
-        self.optimizer_step = (self.optimizer_step + 1) % self.accumulation_steps
 
         return total_loss.item() * self.accumulation_steps
 
