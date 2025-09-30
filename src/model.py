@@ -53,7 +53,6 @@ class Net(nn.Module):
         value = torch.tanh(self.fc_value3(value))
         return policy, value
 
-
 class Model:
     def __init__(self, input_channels, actions, device='cuda', lr=1e-3, weight_decay=1e-4):
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
@@ -64,10 +63,6 @@ class Model:
         self.accumulation_steps = 2
         self.optimizer_step = 0
 
-        # Loss functions
-        self.policy_loss_fn = nn.CrossEntropyLoss()
-        self.value_loss_fn = nn.MSELoss()
-
     def predict(self, state):
         if not isinstance(state, torch.Tensor):
             state_tensor = self.state_to_tensor(state)
@@ -76,7 +71,7 @@ class Model:
 
         with torch.no_grad():
             policy_logits, value = self.net(state_tensor)
-            policy = torch.softmax(policy_logits, dim=1)  # convert logits -> prob
+            policy = torch.softmax(policy_logits, dim=1)
 
         return policy.cpu().numpy()[0], value.cpu().numpy()[0][0]
 
@@ -111,34 +106,53 @@ class Model:
 
         return policies.cpu().numpy(), values.cpu().numpy().flatten()
 
-    def train(self, states, target_policies, target_values):
-        # Convert states
-        state_tensors = [self.state_to_tensor(s) if not isinstance(s, torch.Tensor) else s.to(self.device) for s in states]
-        state_tensors = torch.cat(state_tensors, dim=0).to(self.device)
-
-        # Convert targets
-        if isinstance(target_policies[0], (np.ndarray, list)):
-            target_policies = np.array(target_policies)
-        target_policies = torch.tensor(target_policies, dtype=torch.float32).to(self.device)
-
-        # CrossEntropyLoss cần label dạng chỉ số class, không phải one-hot
-        target_policy_indices = torch.argmax(target_policies, dim=1)
-
-        if isinstance(target_values[0], (np.ndarray, float, int)):
-            target_values = torch.tensor(target_values, dtype=torch.float32)
+    def _prepare_targets(self, target_policies, target_values):
+        # Policies → đảm bảo tensor 2D float32
+        if isinstance(target_policies[0], torch.Tensor):
+            target_policies = torch.stack(target_policies, dim=0)
         else:
+            target_policies = torch.tensor(np.stack(target_policies, axis=0), dtype=torch.float32)
+        target_policies = target_policies.to(self.device, non_blocking=True)
+
+        # Values → đảm bảo tensor 1D float32
+        if isinstance(target_values[0], torch.Tensor):
             target_values = torch.stack(target_values).float()
-        target_values = target_values.to(self.device)
+        else:
+            target_values = torch.tensor(np.array(target_values), dtype=torch.float32)
+        target_values = target_values.to(self.device, non_blocking=True)
 
-        # Mixed precision
-        with torch.cuda.amp.autocast(enabled=(self.device.type == "cuda")):
-            policy_logits, values = self.net(state_tensors)
+        return target_policies, target_values
 
-            value_loss = self.value_loss_fn(values.squeeze(), target_values)
-            policy_loss = self.policy_loss_fn(policy_logits, target_policy_indices)
+    def train(self, states, target_policies, target_values):
+        # Chuẩn hoá target trước khi đưa vào train gốc
+        target_policies, target_values = self._prepare_targets(target_policies, target_values)
+        return self._train_impl(states, target_policies, target_values)
+
+    def _train_impl(self, states, target_policies, target_values):
+        # Nếu đã là tensor batch sẵn (supervised)
+        if isinstance(states, torch.Tensor) and states.ndim == 4:
+            states_tensors = states.to(self.device, dtype=torch.float32, non_blocking=True)
+        else:
+            # Tạo batch từ list (reinforcement/self-play)
+            states_tensors = []
+            for state in states:
+                if not isinstance(state, torch.Tensor):
+                    state_tensor = self.state_to_tensor(state)  # (1,18,8,8)
+                else:
+                    # nếu là (18,8,8) thì thêm batch dim
+                    state_tensor = state.unsqueeze(0) if state.ndim == 3 else state
+                states_tensors.append(state_tensor)
+            states_tensors = torch.cat(states_tensors, dim=0).to(self.device, dtype=torch.float32, non_blocking=True)
+
+        target_policies = target_policies.to(self.device, dtype=torch.float32)
+        target_values = target_values.to(self.device, dtype=torch.float32)
+
+        with torch.cuda.amp.autocast(True):
+            policies, values = self.net(states_tensors)
+            value_loss = torch.mean((target_values - values.squeeze()) ** 2)
+            policy_loss = -torch.mean(torch.sum(target_policies * torch.log(policies + 1e-8), dim=1))
             total_loss = (value_loss + policy_loss) / self.accumulation_steps
 
-        # Backward
         self.scaler.scale(total_loss).backward()
 
         self.optimizer_step += 1
@@ -148,6 +162,7 @@ class Model:
             self.optimizer.zero_grad()
 
         return total_loss.item() * self.accumulation_steps
+
 
     def save(self, path):
         torch.save({
