@@ -211,7 +211,7 @@ def ProcessPGN(games):
 
 class TrainingPipeline:
     def __init__(self, model, num_workers=4, games_per_iteration=50, iterations=1000, buffer=2000,
-                 batch_size=8192,
+                 batch_size=8192, simulations= 100, max_moves= 100,
                  supervised_epochs=10, supervised_batch_size=2048, visualizer=None):
         self.model = model
         self.num_workers = num_workers
@@ -222,7 +222,7 @@ class TrainingPipeline:
         self.supervised_batch_size = supervised_batch_size
         self.iterations = iterations
         self.replay = deque(maxlen=buffer)
-        self.workers = [SelfPlay(model, simulations=400) for _ in range(num_workers)]
+        self.workers = [SelfPlay(model, simulations= simulations, max_moves= max_moves) for _ in range(num_workers)]
 
         self.visualizer = visualizer if visualizer else Visualizer()
         self.iteration = 0
