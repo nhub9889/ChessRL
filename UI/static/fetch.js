@@ -176,46 +176,61 @@ function handleSquareClick(e){
     const isValidMove = validMoves.some(move => move.to === toNotation);
 
     if (isValidMove) {
-        fetch('/move', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                from: fromNotation,
-                to: toNotation
-            })
+    fetch('/move', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            from: fromNotation,
+            to: toNotation
         })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success){
-                renderBoard(data.board);
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success){
+            renderBoard(data.board);
 
-                if (data.result === 'checkmate') {
-                    const message = `Checkmate ${data.winner} wins`;
-                    showNotification(message)
-                    gameOver = true;
-                } else if (data.result === 'stalemate') {
-                    const message = 'Stalemate! The game is a draw';
-                    document.getElementById('status').textContent = message;
-                    gameOver = true;
-                    showNotification(message)
-                }
+            if (data.result === 'checkmate') {
+                const message = `Checkmate ${data.winner} wins`;
+                showNotification(message)
+                gameOver = true;
+            } else if (data.result === 'stalemate') {
+                const message = 'Stalemate! The game is a draw';
+                document.getElementById('status').textContent = message;
+                gameOver = true;
+                showNotification(message)
+            } else {
+                // ✅ gọi bot move sau khi human đi thành công
+                fetch('/bot_move')
+                    .then(res => res.json())
+                    .then(botData => {
+                        if (botData.success) {
+                            renderBoard(botData.board);
+
+                            if (botData.result === 'checkmate') {
+                                const message = `Checkmate ${botData.winner} wins`;
+                                showNotification(message)
+                                gameOver = true;
+                            } else if (botData.result === 'stalemate') {
+                                const message = 'Stalemate! The game is a draw';
+                                document.getElementById('status').textContent = message;
+                                gameOver = true;
+                                showNotification(message)
+                            }
+                        }
+                    });
             }
-            if (selectedPiece && selectedPiece.element) {
-                selectedPiece.element.classList.remove('selected');
-            }
-            selectedPiece = null;
-            document.querySelectorAll('.valid-move').forEach(el => {
-                el.classList.remove('valid-move');
-            });
-        });
-    } else {
+        }
         if (selectedPiece && selectedPiece.element) {
             selectedPiece.element.classList.remove('selected');
         }
         selectedPiece = null;
-    }
+        document.querySelectorAll('.valid-move').forEach(el => {
+            el.classList.remove('valid-move');
+        });
+    });
+}
 }
 
 document.getElementById('new-game').addEventListener('click', initBoard);

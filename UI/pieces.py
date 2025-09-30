@@ -259,7 +259,7 @@ class Piece():
         self.x = x
         self.y = y
         self.isMoved = False
-        piece_type = self.__class__.__name__.lower()
+        piece_type = self.__class__.__name__
         self.pic = f'/static/ChessAssets/{piece_type}{"W" if color == "W" else "B"}.png'
 
     def __repr__(self):

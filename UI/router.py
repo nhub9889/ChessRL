@@ -1,8 +1,18 @@
 from flask import Flask, render_template, jsonify, request, send_from_directory
 import time
 import threading
-from pieces import Board, Queen, Pawn
+import torch
+from UI.pieces import Board, Queen, Pawn
+from pyngrok import ngrok
+from src.MCTS import MCTS
+from src.model import Model
+from src.pipelines import ChessState
+ngrok.set_auth_token("2oEbq4cHUSHLPp6lnjVlx5lcPJT_4AvatxNjPDfVfGSJ6UmcD")
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model = Model().to(device)
+model.load("chessRL_100.pth")  # đường dẫn checkpoint
+mcts = MCTS(model, simulations=200) 
 app = Flask(__name__)
 
 @app.route('/')
@@ -69,7 +79,41 @@ def history():
 
 @app.route('/bot_move')
 def bot_move():
-    return None
+    global currentBoard, history
+
+    # chạy MCTS từ trạng thái hiện tại
+    state = ChessState(currentBoard)
+    action_probs = mcts.run(state)
+
+    if not action_probs:
+        return jsonify({'success': False, 'message': 'No valid moves'})
+
+    # chọn action có xác suất cao nhất
+    action = max(action_probs, key=action_probs.get)
+    (frx, fry), (tox, toy) = action
+
+    success = currentBoard.Move((frx, fry), (tox, toy))
+    if not success:
+        return jsonify({'success': False, 'message': 'Invalid move chosen by bot'})
+
+    piece = currentBoard.getPiece(tox, toy)
+    if isinstance(piece, Pawn) and (toy == 0 or toy == 7):
+        currentBoard.promote(tox, toy, Queen)
+
+    # lưu history
+    history.append({
+        'from': f"{chr(ord('a')+frx)}{8-fry}",
+        'to': f"{chr(ord('a')+tox)}{8-toy}",
+        'player': 'bot'
+    })
+
+    response = {'success': True, 'board': currentBoard.toDict()}
+    if currentBoard.checkmate('W'):
+        response.update({'result': 'checkmate', 'winner': 'black'})
+    elif currentBoard.checkmate('B'):
+        response.update({'result': 'checkmate', 'winner': 'white'})
+
+    return jsonify(response)
 
 
 @app.route('/valid_moves', methods =['GET'])
@@ -93,7 +137,8 @@ def run():
     app.run(debug= True, use_reloader= False, host= '0.0.0.0', port=5000)
 
 if __name__ == '__main__':
-
+    public_url = ngrok.connect(5000)
+    print("Public URL:", public_url)
     thread = threading.Thread(target= run)
     thread.daemon = True
     thread.start()

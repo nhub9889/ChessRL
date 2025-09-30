@@ -5,14 +5,12 @@ import numpy as np
 
 
 class Net(nn.Module):
-    def __init__(self, input_channels, actions, res_blocks=10, filters=256):
+    def __init__(self, input_channels, actions, res_blocks=20, filters=512):
         super(Net, self).__init__()
 
-        # Initial convolution
         self.conv_input = nn.Conv2d(input_channels, filters, kernel_size=3, padding=1)
         self.bn_input = nn.BatchNorm2d(filters)
 
-        # Residual blocks
         self.res_blocks = nn.ModuleList([nn.Sequential(
             nn.Conv2d(filters, filters, kernel_size=3, padding=1),
             nn.BatchNorm2d(filters),
@@ -21,56 +19,64 @@ class Net(nn.Module):
             nn.BatchNorm2d(filters)
         ) for _ in range(res_blocks)])
 
-        # Policy head
-        self.conv_policy = nn.Conv2d(filters, 2, kernel_size=1)
-        self.bn_policy = nn.BatchNorm2d(2)
-        self.fc_policy = nn.Linear(2 * 8 * 8, actions)
+        self.conv_policy = nn.Conv2d(filters, 4, kernel_size=1)
+        self.bn_policy = nn.BatchNorm2d(4)
+        self.fc_policy1 = nn.Linear(4 * 8 * 8, 512)
+        self.fc_policy2 = nn.Linear(512, actions)
 
-        # Value head
-        self.conv_value = nn.Conv2d(filters, 1, kernel_size=1)
-        self.bn_value = nn.BatchNorm2d(1)
-        self.fc_value1 = nn.Linear(1 * 8 * 8, 256)
-        self.fc_value2 = nn.Linear(256, 1)
+        # Value head - tăng kích thước
+        self.conv_value = nn.Conv2d(filters, 2, kernel_size=1)
+        self.bn_value = nn.BatchNorm2d(2)
+        self.fc_value1 = nn.Linear(2 * 8 * 8, 512)
+        self.fc_value2 = nn.Linear(512, 256)
+        self.fc_value3 = nn.Linear(256, 1)
 
     def forward(self, x):
         x = torch.relu(self.bn_input(self.conv_input(x)))
 
-        # Residual blocks
         for res_block in self.res_blocks:
             residual = x
             x = res_block(x)
             x += residual
             x = torch.relu(x)
 
-        # Policy head
         policy = torch.relu(self.bn_policy(self.conv_policy(x)))
         policy = policy.view(policy.size(0), -1)
-        policy = self.fc_policy(policy)
+        policy = torch.relu(self.fc_policy1(policy))
+        policy = self.fc_policy2(policy)
         policy = torch.softmax(policy, dim=1)
 
-        # Value head
         value = torch.relu(self.bn_value(self.conv_value(x)))
         value = value.view(value.size(0), -1)
         value = torch.relu(self.fc_value1(value))
         value = torch.relu(self.fc_value2(value))
-
+        value = torch.tanh(self.fc_value3(value))
         return policy, value
 
 
 class Model:
-    def __init__(self, input_channels, actions, device='cuda', lr=0.01, weight_decay=1e-4):
-        self.device = torch.device(device)
+    def __init__(self, input_channels, actions, device='cuda', lr=1e-3, weight_decay=1e-4):
+        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.net = Net(input_channels, actions).to(self.device)
+
         self.optimizer = optim.Adam(self.net.parameters(), lr=lr, weight_decay=weight_decay)
+        self.scaler = torch.cuda.amp.GradScaler(enabled=(self.device.type == "cuda"))
+        self.accumulation_steps = 2
+        self.optimizer_step = 0
+
+        # Loss functions
+        self.policy_loss_fn = nn.CrossEntropyLoss()
+        self.value_loss_fn = nn.MSELoss()
 
     def predict(self, state):
         if not isinstance(state, torch.Tensor):
             state_tensor = self.state_to_tensor(state)
         else:
-            state_tensor = state
+            state_tensor = state.to(self.device)
 
         with torch.no_grad():
-            policy, value = self.net(state_tensor)
+            policy_logits, value = self.net(state_tensor)
+            policy = torch.softmax(policy_logits, dim=1)  # convert logits -> prob
 
         return policy.cpu().numpy()[0], value.cpu().numpy()[0][0]
 
@@ -93,47 +99,55 @@ class Model:
         board_tensor[12, :, :] = 1 if chess_state.board.curPlayer == 'W' else 0
         return torch.from_numpy(board_tensor).unsqueeze(0).to(self.device)
 
+    def batch_predict(self, states):
+        if not states:
+            return [], []
+        state_tensors = [self.state_to_tensor(s) if not isinstance(s, torch.Tensor) else s.to(self.device) for s in states]
+        state_batch = torch.cat(state_tensors, dim=0)
+
+        with torch.no_grad():
+            policy_logits, values = self.net(state_batch)
+            policies = torch.softmax(policy_logits, dim=1)
+
+        return policies.cpu().numpy(), values.cpu().numpy().flatten()
+
     def train(self, states, target_policies, target_values):
-        # Convert states to tensors if they aren't already
-        if not isinstance(states[0], torch.Tensor):
-            state_tensors = torch.stack([self.state_to_tensor(s) for s in states])
-        else:
-            state_tensors = torch.stack(states)
+        # Convert states
+        state_tensors = [self.state_to_tensor(s) if not isinstance(s, torch.Tensor) else s.to(self.device) for s in states]
+        state_tensors = torch.cat(state_tensors, dim=0).to(self.device)
 
-        state_tensors = state_tensors.to(self.device)
+        # Convert targets
+        if isinstance(target_policies[0], (np.ndarray, list)):
+            target_policies = np.array(target_policies)
+        target_policies = torch.tensor(target_policies, dtype=torch.float32).to(self.device)
 
-        # Convert target_policies to tensor
-        if not isinstance(target_policies[0], torch.Tensor):
-            target_policies = torch.tensor(np.array(target_policies), dtype=torch.float32)
-        else:
-            target_policies = torch.stack(target_policies)
+        # CrossEntropyLoss cần label dạng chỉ số class, không phải one-hot
+        target_policy_indices = torch.argmax(target_policies, dim=1)
 
-        target_policies = target_policies.to(self.device)
-
-        # Convert target_values to tensor
-        if not isinstance(target_values[0], torch.Tensor):
+        if isinstance(target_values[0], (np.ndarray, float, int)):
             target_values = torch.tensor(target_values, dtype=torch.float32)
         else:
-            target_values = torch.stack(target_values).squeeze()
-
+            target_values = torch.stack(target_values).float()
         target_values = target_values.to(self.device)
 
-        # Forward pass
-        policies, values = self.net(state_tensors)
+        # Mixed precision
+        with torch.cuda.amp.autocast(enabled=(self.device.type == "cuda")):
+            policy_logits, values = self.net(state_tensors)
 
-        # Calculate losses
-        value_loss = torch.mean((target_values - values.squeeze()) ** 2)
-        policy_loss = -torch.mean(torch.sum(target_policies * torch.log(policies + 1e-8), dim=1))
+            value_loss = self.value_loss_fn(values.squeeze(), target_values)
+            policy_loss = self.policy_loss_fn(policy_logits, target_policy_indices)
+            total_loss = (value_loss + policy_loss) / self.accumulation_steps
 
-        # Use weight decay from optimizer instead of manual regularization
-        total_loss = value_loss + policy_loss
+        # Backward
+        self.scaler.scale(total_loss).backward()
 
-        # Backward pass
-        self.optimizer.zero_grad()
-        total_loss.backward()
-        self.optimizer.step()
+        self.optimizer_step += 1
+        if self.optimizer_step % self.accumulation_steps == 0:
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad()
 
-        return total_loss.item()
+        return total_loss.item() * self.accumulation_steps
 
     def save(self, path):
         torch.save({
@@ -141,10 +155,7 @@ class Model:
             'optimizer_state_dict': self.optimizer.state_dict(),
         }, path)
 
-    def load(self, path, device= 'cuda'):
-        if device == 'cuda':
-            checkpoint = torch.load(path)
-        else:
-            checkpoint = torch.load(path, map_location=torch.device('cpu'))
+    def load(self, path, device='cuda'):
+        checkpoint = torch.load(path, map_location=self.device)
         self.net.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
