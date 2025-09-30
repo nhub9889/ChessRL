@@ -30,8 +30,10 @@ class Visualizer:
         plt.ion()
         self.fig, self.axs = plt.subplots(2, 3, figsize=(15, 10))
         self.fig.suptitle('Training progress', fontsize=16)
+        plt.switch_backend('Agg')
 
     def update_plots(self):
+        plt.switch_backend('Agg')
         for ax in self.axs.flat:
             ax.clear()
         valid_indices = [i for i, loss in enumerate(self.metrics['reinforcement_loss']) if loss is not None]
@@ -132,9 +134,7 @@ class Visualizer:
                 self.axs[1, 1].set_ylabel('Temperature')
                 self.axs[1, 1].grid(True)
 
-        plt.tight_layout()
-        plt.draw()
-        plt.pause(0.01)
+        self.save_plots()
 
     def save_plots(self):
         path = os.path.join(self.dir, f"training_plots_{datetime.datetime.now().strftime('%Y%m%d-%H%M')}.png")

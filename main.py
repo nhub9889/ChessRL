@@ -23,8 +23,8 @@ def main():
     if args.flag:
         path = args.pgn_path
         output_path = args.output
-        visualizer = Visualizer()
-        pipeline = TrainingPipeline(model, visualizer= visualizer, batch_size= args.batch_size,
+        # visualizer = Visualizer()
+        pipeline = TrainingPipeline(model, batch_size= args.batch_size,
                                     supervised_batch_size= args.supervised_batch_size, num_workers= args.num_workers,
                                     supervised_epochs= args.supervised_epochs, iterations= args.iterations)
         # pipeline.supervised_train(path)
@@ -32,8 +32,8 @@ def main():
         pipeline.train()
 
         model.save(output_path)
-        visualizer.generate_report()
-        visualizer.save_plots()
+        # visualizer.generate_report()
+        # visualizer.save_plots()
 
 if __name__ == '__main__':
     main()

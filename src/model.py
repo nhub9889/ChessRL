@@ -60,7 +60,7 @@ class Model:
         self.optimizer = optim.Adam(self.net.parameters(), lr=lr, weight_decay=weight_decay)
         self.scaler = torch.cuda.amp.GradScaler()
         self.accumulation_steps = 2
-        self.optimizer_step = 0
+        self.optimizer_step = (self.optimizer_step + 1) % self.accumulation_steps
 
     def predict(self, state):
         if not isinstance(state, torch.Tensor):

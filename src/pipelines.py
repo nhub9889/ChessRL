@@ -77,7 +77,7 @@ class ChessState:
 class SelfPlay:
     def __init__(self, model, simulations=800, temperature=1.0, max_moves=512):
         self.model = model
-        self.mcts = MCTS(model, simulations)
+        self.mcts = MCTS(model, simulations= simulations)
         self.temperature = temperature
         self.max_moves = max_moves
 
@@ -91,49 +91,59 @@ class SelfPlay:
         state = ChessState(Board())
         states = []
         mcts_policies = []
-        currentPlayer = state.board.curPlayer
+        start_player = state.board.curPlayer
         count = 0
 
         while not state.isTerminal() and count < self.max_moves:
-            # FIXED: Now mcts.run() returns only action_probs, not a tuple
             action_probs = self.mcts.run(state)
 
-            if not action_probs:  # No legal moves or terminal state
+            if not action_probs:
                 break
 
-            # Apply temperature to visit counts
-            visits = np.array([count for count in action_probs.values()])
+            # ensure deterministic ordering when building arrays
+            actions = list(action_probs.keys())
+            visits = np.array([action_probs[a] for a in actions], dtype=np.float64)
 
-            if self.temperature > 0:
-                probs = visits ** (1 / self.temperature)
-                probs /= probs.sum()
+            if visits.sum() == 0:
+                # fall back to uniform if MCTS returned zeros
+                probs = np.ones_like(visits) / len(visits)
             else:
-                probs = visits / visits.sum()
+                if self.temperature > 0:
+                    probs = visits ** (1.0 / self.temperature)
+                    probs = probs / probs.sum()
+                else:
+                    probs = visits / visits.sum()
 
             states.append(state)
 
-            # Create policy vector
-            vector_policy = np.zeros(64 * 64)
-            for (from_pos, to_pos), prob in action_probs.items():
-                idx = from_pos[0] * 8 * 64 + from_pos[1] * 64 + to_pos[0] * 8 + to_pos[1]
-                vector_policy[idx] = prob
+            # build policy vector consistent with MCTS._move_to_index
+            vector_policy = np.zeros(64 * 64, dtype=np.float32)
+            for a, p in zip(actions, probs):
+                idx = self._action_to_idx(a)
+                if 0 <= idx < vector_policy.size:
+                    vector_policy[idx] = float(p)
+
+            # normalize to avoid tiny numerical issues
+            ssum = vector_policy.sum()
+            if ssum > 0:
+                vector_policy /= ssum
             mcts_policies.append(vector_policy)
 
-            # Select action
-            actions = list(action_probs.keys())
-            action = random.choices(actions, weights=probs)[0]
-
+            # pick an action using the same order as 'actions' and 'probs'
+            action = random.choices(actions, weights=probs, k=1)[0]
             state = state.apply(action)
             count += 1
 
         outcome = state.get_reward()
         training_data = []
 
-        for i, (state, policy) in enumerate(zip(states, mcts_policies)):
-            # Determine the outcome from the perspective of the player who made the move
-            player_outcome = outcome if (i % 2 == 0 and currentPlayer == 'W') or (
-                        i % 2 == 1 and currentPlayer == 'B') else -outcome
-            training_data.append((state, policy, player_outcome))
+        # Build training tuples with correct perspective per move
+        for i, (s, policy) in enumerate(zip(states, mcts_policies)):
+            # if the start_player made move 0, moves with even i are start_player's moves
+            mover = start_player if (i % 2 == 0) else ('B' if start_player == 'W' else 'W')
+            # Simpler: alternate perspective: if mover == 'W' then perspective = outcome else -outcome
+            perspective = outcome if mover == 'W' else -outcome
+            training_data.append((s, policy, perspective))
 
         return training_data
 
@@ -213,11 +223,10 @@ class TrainingPipeline:
         self.iterations = iterations
         self.replay = deque(maxlen=buffer)
         self.workers = [SelfPlay(model, simulations=400) for _ in range(num_workers)]
-
+        self.visualizer = Visualizer if visualizer != None else visualizer
         self.iteration = 0
         self.best_win_rate = 0
         self.best_model_path = None
-        self.visualizer = visualizer if visualizer else Visualizer()
 
     def evaluate(self):
         wins = 0
@@ -301,42 +310,43 @@ class TrainingPipeline:
         print("Supervised training completed!")
 
     def train(self):
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            gpu_mem = torch.cuda.memory_allocated() / 1024 ** 3
-            print(f"GPU Memory before iteration: {gpu_mem:.1f}GB")
-
         for iteration in range(self.iterations):
             print(f"Iteration {iteration + 1}/{self.iterations}")
-
-            if torch.cuda.is_available() and iteration % 10 == 0:
-                gpu_mem = torch.cuda.memory_allocated() / 1024 ** 3
-                print(f"GPU Memory: {gpu_mem:.1f}GB")
-
             all_data = []
             game_lengths = []
 
-            games_per_worker = max(1, self.games_per_iteration // self.num_workers)
+            # generate self-play data
+            per_worker_games = max(1, self.games_per_iteration // max(1, self.num_workers))
             for worker in self.workers:
-                for _ in range(games_per_worker):
+                for _ in range(per_worker_games):
                     game_data = worker.play()
-                    all_data.extend(game_data)
                     if game_data:
+                        all_data.extend(game_data)
                         game_lengths.append(len(game_data))
 
             self.replay.extend(all_data)
 
             loss = None
-
             if len(self.replay) >= self.batch_size:
-                batch_size_actual = min(len(self.replay), self.batch_size)
-                batch = random.sample(self.replay, batch_size_actual)
+                batch = random.sample(self.replay, self.batch_size)
                 states, target_policies, target_values = zip(*batch)
 
-                loss = self.model.train(states, target_policies, target_values)
-                print(f"Training loss: {loss:.4f}, Batch size: {batch_size_actual}")
+                # capture pre-params to check actual updates
+                param_pre = [p.detach().cpu().clone() for p in self.model.net.parameters()]
 
-            temperature = max(0.1, 1.0 - (iteration / self.iterations) * 0.9)
+                loss = self.model.train(states, target_policies, target_values)
+                print(f"Training loss: {loss:.4f}")
+
+                # compute param change
+                param_post = [p.detach().cpu().clone() for p in self.model.net.parameters()]
+                max_delta = 0.0
+                for a, b in zip(param_pre, param_post):
+                    delta = (b - a).norm().item()
+                    if delta > max_delta:
+                        max_delta = delta
+                print(f"Max parameter L2-change this batch: {max_delta:.6e}")
+
+            temperature = max(0.1, 1.0 - (iteration / max(1, self.iterations)) * 0.9)
             for worker in self.workers:
                 worker.temperature = temperature
 
@@ -344,22 +354,23 @@ class TrainingPipeline:
             if (iteration + 1) % 50 == 0:
                 eval_results = self.evaluate()
 
-                win_rate = eval_results['wins'] / (
-                            eval_results['wins'] + eval_results['draws'] + eval_results['losses'])
+                total = (eval_results['wins'] + eval_results['draws'] + eval_results['losses'])
+                win_rate = eval_results['wins'] / total if total > 0 else 0.0
                 if win_rate > self.best_win_rate:
                     self.best_win_rate = win_rate
                     self.best_model_path = f"chessRL_{iteration + 1}.pth"
                     self.model.save(self.best_model_path)
                     print(f"Best model saved with win rate: {win_rate:.2f}")
 
-                avg_length = np.mean(game_lengths) if game_lengths else None
-                self.visualizer.update_metrics(
-                    iteration=self.iteration,
-                    reinforcement_loss=loss,
-                    eval_results=eval_results,
-                    game_length=avg_length,
-                    exploration_rate=temperature
-                )
+            # Update visualizer
+            avg_length = np.mean(game_lengths) if game_lengths else None
+            self.visualizer.update_metrics(
+                iteration=self.iteration,
+                reinforcement_loss=loss,
+                eval_results=eval_results,
+                game_length=avg_length,
+                exploration_rate=temperature
+            )
 
             if (iteration + 1) % 10 == 0:
                 self.model.save(f"ChessRL_{iteration + 1}.pth")
